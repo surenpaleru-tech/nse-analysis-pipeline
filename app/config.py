@@ -6,12 +6,39 @@ Simplified for the data pipeline — only database and ingestion settings.
 import os
 from functools import lru_cache
 from typing import Optional
+from urllib.parse import urlparse, urlunparse, quote, unquote
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Load environment variables into os.environ
 load_dotenv()
+
+
+def _sanitize_db_url(url: str) -> str:
+    """URL-encodes special characters in the password of a database connection URI."""
+    try:
+        parsed = urlparse(url)
+        if not parsed.password:
+            return url
+        # Unquote first to avoid double encoding, then quote the password safely
+        password = unquote(parsed.password)
+        quoted_password = quote(password, safe="")
+        
+        # Build netloc: username:password@host:port
+        netloc = parsed.username or ""
+        if quoted_password:
+            netloc += f":{quoted_password}"
+        if parsed.hostname:
+            netloc += f"@{parsed.hostname}"
+            if parsed.port:
+                netloc += f":{parsed.port}"
+                
+        parts = list(parsed)
+        parts[1] = netloc
+        return urlunparse(parts)
+    except Exception:
+        return url
 
 
 class Settings(BaseSettings):
@@ -49,7 +76,7 @@ class Settings(BaseSettings):
         """
         raw_url = self.database_url_override or os.environ.get("DATABASE_URL")
         if raw_url:
-            raw_url = raw_url.strip()
+            raw_url = _sanitize_db_url(raw_url.strip())
             # Supabase gives postgresql:// — convert to asyncpg driver
             if raw_url.startswith("postgresql://"):
                 return raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
@@ -66,7 +93,7 @@ class Settings(BaseSettings):
         """Returns sync database URL."""
         raw_url = self.database_url_override or os.environ.get("DATABASE_URL")
         if raw_url:
-            raw_url = raw_url.strip()
+            raw_url = _sanitize_db_url(raw_url.strip())
             if raw_url.startswith("postgresql+asyncpg://"):
                 return raw_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
             if raw_url.startswith("postgresql://"):
