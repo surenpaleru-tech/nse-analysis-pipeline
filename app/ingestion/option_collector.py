@@ -175,26 +175,31 @@ class OptionCollector:
             return None
 
     async def _upsert_records(self, records: list[dict]) -> int:
-        """Upsert option chain records using PostgreSQL ON CONFLICT."""
+        """Upsert option chain records using PostgreSQL ON CONFLICT in chunks."""
         if not records:
             return 0
 
-        # Batch insert with ON CONFLICT DO UPDATE
-        stmt = insert(OptionChain).values(records)
-        stmt = stmt.on_conflict_do_update(
-            constraint="uq_oc_trade_symbol_expiry_strike_type",
-            set_={
-                "open": stmt.excluded.open,
-                "high": stmt.excluded.high,
-                "low": stmt.excluded.low,
-                "close": stmt.excluded.close,
-                "volume": stmt.excluded.volume,
-                "oi": stmt.excluded.oi,
-                "change_oi": stmt.excluded.change_oi,
-                "implied_volatility": stmt.excluded.implied_volatility,
-                "underlying_price": stmt.excluded.underlying_price,
-            },
-        )
+        chunk_size = 1000
+        inserted_count = 0
+        
+        for i in range(0, len(records), chunk_size):
+            chunk = records[i:i + chunk_size]
+            stmt = insert(OptionChain).values(chunk)
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_oc_trade_symbol_expiry_strike_type",
+                set_={
+                    "open": stmt.excluded.open,
+                    "high": stmt.excluded.high,
+                    "low": stmt.excluded.low,
+                    "close": stmt.excluded.close,
+                    "volume": stmt.excluded.volume,
+                    "oi": stmt.excluded.oi,
+                    "change_oi": stmt.excluded.change_oi,
+                    "implied_volatility": stmt.excluded.implied_volatility,
+                    "underlying_price": stmt.excluded.underlying_price,
+                },
+            )
+            await self.db.execute(stmt)
+            inserted_count += len(chunk)
 
-        await self.db.execute(stmt)
-        return len(records)
+        return inserted_count

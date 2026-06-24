@@ -117,16 +117,23 @@ class SpotCollector:
         if not records:
             return 0
 
-        stmt = insert(SpotPrice).values(records)
-        stmt = stmt.on_conflict_do_update(
-            constraint="uq_spot_date_symbol",
-            set_={
-                "open": stmt.excluded.open,
-                "high": stmt.excluded.high,
-                "low": stmt.excluded.low,
-                "close": stmt.excluded.close,
-                "volume": stmt.excluded.volume,
-            },
-        )
-        await self.db.execute(stmt)
-        return len(records)
+        chunk_size = 1000
+        inserted_count = 0
+        
+        for i in range(0, len(records), chunk_size):
+            chunk = records[i:i + chunk_size]
+            stmt = insert(SpotPrice).values(chunk)
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_spot_date_symbol",
+                set_={
+                    "open": stmt.excluded.open,
+                    "high": stmt.excluded.high,
+                    "low": stmt.excluded.low,
+                    "close": stmt.excluded.close,
+                    "volume": stmt.excluded.volume,
+                },
+            )
+            await self.db.execute(stmt)
+            inserted_count += len(chunk)
+            
+        return inserted_count
