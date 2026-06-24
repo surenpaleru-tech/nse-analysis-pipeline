@@ -126,6 +126,9 @@ async def _async_daily_pipeline():
 
     finally:
         await scraper.close()
+        from app.core.database import engine
+        await engine.dispose()
+        logger.info("Database engine connections disposed")
 
 
 def backfill_data(start_date_str: str, end_date_str: str):
@@ -200,3 +203,6 @@ async def _async_backfill(start_str: str, end_str: str):
 
     finally:
         await scraper.close()
+        from app.core.database import engine
+        await engine.dispose()
+        logger.info("Database engine connections disposed")
