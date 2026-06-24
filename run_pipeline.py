@@ -33,14 +33,29 @@ def main():
     # Log database connection target (excluding credentials) for debugging
     try:
         import os
-        print(f"[{datetime.now().isoformat()}] Available env keys: {sorted(list(os.environ.keys()))}")
-        from app.config import get_settings
         from urllib.parse import urlparse
+        print(f"[{datetime.now().isoformat()}] Available env keys: {sorted(list(os.environ.keys()))}")
+        
+        # Check raw os.environ value before loading any config/dotenv
+        raw_before = os.environ.get("DATABASE_URL", "NOT_SET")
+        if raw_before != "NOT_SET":
+            parsed_before = urlparse(raw_before)
+            print(f"[{datetime.now().isoformat()}] Raw env DATABASE_URL host (BEFORE config load): {parsed_before.hostname}:{parsed_before.port or 5432}")
+        else:
+            print(f"[{datetime.now().isoformat()}] Raw env DATABASE_URL (BEFORE config load): NOT_SET")
+
+        from app.config import get_settings
         settings = get_settings()
         parsed = urlparse(settings.database_url)
-        print(f"[{datetime.now().isoformat()}] Database host target: {parsed.hostname}:{parsed.port or 5432}")
+        print(f"[{datetime.now().isoformat()}] Database host target (AFTER config load): {parsed.hostname}:{parsed.port or 5432}")
+        
+        # Check raw os.environ value after config/dotenv load
+        raw_after = os.environ.get("DATABASE_URL", "NOT_SET")
+        if raw_after != "NOT_SET":
+            parsed_after = urlparse(raw_after)
+            print(f"[{datetime.now().isoformat()}] Raw env DATABASE_URL host (AFTER config load): {parsed_after.hostname}:{parsed_after.port or 5432}")
     except Exception as e:
-        print(f"[{datetime.now().isoformat()}] Could not parse database URL: {e}")
+        print(f"[{datetime.now().isoformat()}] Error during database URL check: {e}")
 
     try:
         if args.backfill:
