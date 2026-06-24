@@ -130,15 +130,14 @@ class OptionCollector:
         """Parse date string from bhavcopy format."""
         if not date_str or not date_str.strip():
             return None
-        try:
-            # NSE bhavcopy date format: DD-MMM-YYYY (e.g., "27-JUN-2024")
-            return datetime.strptime(date_str.strip(), "%d-%b-%Y").date()
-        except ValueError:
+        s = date_str.strip()
+        for fmt in ("%d-%b-%Y", "%d-%m-%Y", "%Y-%m-%d"):
             try:
-                return datetime.strptime(date_str.strip(), "%d-%m-%Y").date()
+                return datetime.strptime(s, fmt).date()
             except ValueError:
-                logger.warning(f"Cannot parse date: {date_str}")
-                return None
+                continue
+        logger.warning(f"Cannot parse date: {date_str}")
+        return None
 
     def _classify_expiry_type(self, symbol: str, expiry_date: date) -> str:
         """

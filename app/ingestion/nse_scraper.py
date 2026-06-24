@@ -58,6 +58,60 @@ USER_AGENTS = [
 ]
 
 
+def _normalize_udiff_df(df: pl.DataFrame, is_fo: bool = False) -> pl.DataFrame:
+    """
+    Normalizes UDiFF (new NSE format) columns and values to match the legacy format.
+    If the dataframe is already in legacy format, it leaves it unchanged.
+    """
+    # 1. Column renaming
+    col_map = {
+        "TradDt": "TIMESTAMP",
+        "TckrSymb": "SYMBOL",
+        "SctySrs": "SERIES",
+        "FinInstrmTp": "INSTRUMENT",
+        "XpryDt": "EXPIRY_DT",
+        "StrkPric": "STRIKE_PR",
+        "OptnTp": "OPTION_TYP",
+        "OpnPric": "OPEN",
+        "HghPric": "HIGH",
+        "LwPric": "LOW",
+        "ClsPric": "CLOSE",
+        "SttlmPric": "SETTLE_PR",
+        "TtlTradgVol": "CONTRACTS" if is_fo else "TOTTRDQTY",
+        "TtlTrfVal": "VAL_INLAKH",
+        "OpnIntrst": "OPEN_INT",
+        "ChngInOpnIntrst": "CHG_IN_OI",
+    }
+    
+    rename_dict = {}
+    for old_col, new_col in col_map.items():
+        # Match case-insensitively
+        matching_cols = [c for c in df.columns if c.lower().strip() == old_col.lower()]
+        if matching_cols:
+            rename_dict[matching_cols[0]] = new_col
+            
+    if rename_dict:
+        df = df.rename(rename_dict)
+        
+    # 2. Value mapping for INSTRUMENT column if it exists and is F&O
+    if is_fo and "INSTRUMENT" in df.columns:
+        # IDO -> OPTIDX
+        # STO -> OPTSTK
+        # IDF -> FUTIDX
+        # STF -> FUTSTK
+        inst_map = {
+            "IDO": "OPTIDX",
+            "STO": "OPTSTK",
+            "IDF": "FUTIDX",
+            "STF": "FUTSTK"
+        }
+        df = df.with_columns(
+            pl.col("INSTRUMENT").replace(inst_map, default=pl.col("INSTRUMENT"))
+        )
+        
+    return df
+
+
 class NSEScraper(DataSource):
     """NSE Archives data scraper with rate limiting and session management."""
 
@@ -128,21 +182,33 @@ class NSEScraper(DataSource):
     )
     async def fetch_derivatives_bhavcopy(self, trade_date: date) -> Optional[pl.DataFrame]:
         """Download and parse F&O bhavcopy for a given date."""
-        month_str = MONTH_MAP[trade_date.month]
+        month_num = trade_date.strftime("%m")
         day_str = trade_date.strftime("%d")
         year_str = str(trade_date.year)
 
-        url = FO_BHAVCOPY_URL.format(
+        # Build new UDiFF URL
+        udiff_url = f"{NSE_ARCHIVES_URL}/content/fo/BhavCopy_NSE_FO_0_0_0_{year_str}{month_num}{day_str}_F_0000.csv.zip"
+
+        # Build legacy URL as fallback
+        month_str = MONTH_MAP[trade_date.month]
+        legacy_url = FO_BHAVCOPY_URL.format(
             base=NSE_ARCHIVES_URL,
             year=year_str,
             month=month_str,
             day=day_str,
         )
 
-        logger.info(f"Fetching F&O bhavcopy for {trade_date}", url=url)
+        logger.info(f"Fetching F&O bhavcopy for {trade_date}", url=udiff_url)
 
         try:
-            response = await self._rate_limited_request(url)
+            # Try UDiFF first
+            response = await self._rate_limited_request(udiff_url)
+            is_udiff = True
+
+            if response.status_code == 404:
+                logger.info(f"UDiFF F&O bhavcopy not found for {trade_date}, trying legacy URL", url=legacy_url)
+                response = await self._rate_limited_request(legacy_url)
+                is_udiff = False
 
             if response.status_code == 404:
                 logger.info(f"No F&O bhavcopy for {trade_date} (holiday or weekend)")
@@ -162,11 +228,15 @@ class NSEScraper(DataSource):
                 with zf.open(csv_filename) as csv_file:
                     df = pl.read_csv(csv_file.read())
 
+            # Normalize UDiFF columns and values if applicable
+            if is_udiff:
+                df = _normalize_udiff_df(df, is_fo=True)
+
             logger.info(
                 f"Parsed F&O bhavcopy",
                 date=str(trade_date),
                 rows=len(df),
-                columns=df.columns,
+                columns=df.columns[:10],
             )
             return df
 
@@ -184,21 +254,33 @@ class NSEScraper(DataSource):
     )
     async def fetch_equity_bhavcopy(self, trade_date: date) -> Optional[pl.DataFrame]:
         """Download and parse equity bhavcopy for spot prices."""
-        month_str = MONTH_MAP[trade_date.month]
+        month_num = trade_date.strftime("%m")
         day_str = trade_date.strftime("%d")
         year_str = str(trade_date.year)
 
-        url = EQ_BHAVCOPY_URL.format(
+        # Build new UDiFF URL
+        udiff_url = f"{NSE_ARCHIVES_URL}/content/cm/BhavCopy_NSE_CM_0_0_0_{year_str}{month_num}{day_str}_F_0000.csv.zip"
+
+        # Build legacy URL as fallback
+        month_str = MONTH_MAP[trade_date.month]
+        legacy_url = EQ_BHAVCOPY_URL.format(
             base=NSE_ARCHIVES_URL,
             year=year_str,
             month=month_str,
             day=day_str,
         )
 
-        logger.info(f"Fetching equity bhavcopy for {trade_date}", url=url)
+        logger.info(f"Fetching equity bhavcopy for {trade_date}", url=udiff_url)
 
         try:
-            response = await self._rate_limited_request(url)
+            # Try UDiFF first
+            response = await self._rate_limited_request(udiff_url)
+            is_udiff = True
+
+            if response.status_code == 404:
+                logger.info(f"UDiFF equity bhavcopy not found for {trade_date}, trying legacy URL", url=legacy_url)
+                response = await self._rate_limited_request(legacy_url)
+                is_udiff = False
 
             if response.status_code == 404:
                 logger.info(f"No equity bhavcopy for {trade_date}")
@@ -211,6 +293,10 @@ class NSEScraper(DataSource):
                 csv_filename = zf.namelist()[0]
                 with zf.open(csv_filename) as csv_file:
                     df = pl.read_csv(csv_file.read())
+
+            # Normalize UDiFF columns if applicable
+            if is_udiff:
+                df = _normalize_udiff_df(df, is_fo=False)
 
             logger.info(f"Parsed equity bhavcopy", date=str(trade_date), rows=len(df))
             return df
