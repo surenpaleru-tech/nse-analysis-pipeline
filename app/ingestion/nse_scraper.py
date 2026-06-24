@@ -340,38 +340,125 @@ class NSEScraper(DataSource):
 
     async def fetch_fno_symbols(self) -> list[dict]:
         """
-        Fetch current F&O stock universe from NSE.
-        Parses the latest F&O bhavcopy to extract unique symbols.
+        Fetch current F&O universe (stocks and indices) from NSE.
+        Attempts to load from the official market lots file (fo_mktlots.csv).
+        Falls back to parsing recent bhavcopies if the market lots file is unavailable.
         """
+        url = f"{NSE_ARCHIVES_URL}/content/fo/fo_mktlots.csv"
+        logger.info(f"Fetching F&O universe and lot sizes from {url}")
+        
+        index_symbols = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"}
+        fallback_index_lots = {
+            "NIFTY": 65,
+            "BANKNIFTY": 30,
+            "FINNIFTY": 60,
+            "MIDCPNIFTY": 120,
+            "NIFTYNXT50": 25,
+        }
+        
         try:
-            # Use today's date or most recent trading day
+            response = await self._rate_limited_request(url)
+            if response.status_code == 200:
+                import csv
+                import io
+                
+                reader = csv.reader(io.StringIO(response.text))
+                # Skip header
+                next(reader)
+                
+                symbols_data = []
+                for row in reader:
+                    if not row or len(row) < 3:
+                        continue
+                    underlying = row[0].strip()
+                    symbol = row[1].strip()
+                    
+                    # Skip header/divider rows
+                    if symbol.lower() in ("symbol", ""):
+                        continue
+                    if underlying.lower().startswith("derivatives on"):
+                        continue
+                        
+                    # Find the first non-empty column starting from column 2 (JUN-26, etc.)
+                    lot_size = None
+                    for col_val in row[2:]:
+                        val = col_val.strip()
+                        if val:
+                            try:
+                                lot_size = int(val)
+                                break
+                            except ValueError:
+                                pass
+                                
+                    inst_type = "index" if symbol in index_symbols else "stock"
+                    symbols_data.append({
+                        "symbol": symbol,
+                        "instrument_type": inst_type,
+                        "lot_size": lot_size
+                    })
+                
+                if symbols_data:
+                    logger.info(f"Successfully fetched {len(symbols_data)} F&O symbols with lot sizes from fo_mktlots.csv")
+                    return symbols_data
+                    
+            logger.warning(f"Failed to fetch fo_mktlots.csv (status {response.status_code}), falling back to recent bhavcopies")
+        except Exception as e:
+            logger.warning(f"Error fetching fo_mktlots.csv: {e}, falling back to recent bhavcopies")
+            
+        # Fallback logic
+        try:
             from datetime import timedelta
             check_date = date.today()
-
-            # Try last 5 days to find a valid bhavcopy
+            
             for i in range(5):
                 d = check_date - timedelta(days=i)
                 df = await self.fetch_derivatives_bhavcopy(d)
                 if df is not None:
-                    # Extract unique symbols for stock options
-                    stock_symbols = (
+                    # Extract unique symbols
+                    # Get indices
+                    optidx_symbols = (
+                        df.filter(pl.col("INSTRUMENT") == "OPTIDX")
+                        .select("SYMBOL")
+                        .unique()
+                        .to_series()
+                        .to_list()
+                    )
+                    # Get stocks
+                    optstk_symbols = (
                         df.filter(pl.col("INSTRUMENT") == "OPTSTK")
                         .select("SYMBOL")
                         .unique()
                         .to_series()
                         .to_list()
                     )
-
-                    return [
-                        {"symbol": s.strip(), "instrument_type": "stock", "lot_size": None}
-                        for s in stock_symbols
-                    ]
-
-            logger.warning("Could not fetch F&O symbols from recent bhavcopy")
+                    
+                    symbols_data = []
+                    # Add indices
+                    for s in optidx_symbols:
+                        s_clean = s.strip()
+                        if s_clean in index_symbols:
+                            symbols_data.append({
+                                "symbol": s_clean,
+                                "instrument_type": "index",
+                                "lot_size": fallback_index_lots.get(s_clean)
+                            })
+                    # Add stocks
+                    for s in optstk_symbols:
+                        s_clean = s.strip()
+                        symbols_data.append({
+                            "symbol": s_clean,
+                            "instrument_type": "stock",
+                            "lot_size": None
+                        })
+                    
+                    if symbols_data:
+                        logger.info(f"Fallback: successfully extracted {len(symbols_data)} F&O symbols from recent bhavcopy")
+                        return symbols_data
+                        
+            logger.warning("Fallback: could not extract F&O symbols from recent bhavcopy")
             return []
-
         except Exception as e:
-            logger.error(f"Error fetching F&O symbols: {e}")
+            logger.error(f"Fallback failed: error fetching F&O symbols: {e}")
             return []
 
     async def is_available(self) -> bool:

@@ -35,6 +35,83 @@ def run_daily_pipeline():
         raise
 
 
+async def sync_fno_universe(db):
+    """Sync the F&O stock and index universe and lot sizes dynamically from NSE."""
+    from app.ingestion.nse_scraper import NSEScraper
+    from app.models import FnOUniverse
+    from datetime import date
+    from sqlalchemy import select
+    
+    scraper = NSEScraper()
+    try:
+        fno_symbols = await scraper.fetch_fno_symbols()
+        if fno_symbols:
+            logger.info(f"Syncing F&O universe with {len(fno_symbols)} symbols from NSE...")
+            added_count = 0
+            updated_count = 0
+            deactivated_count = 0
+            
+            # Create a set of fetched symbols to check which ones to deactivate
+            fetched_symbols = {item["symbol"] for item in fno_symbols}
+            
+            # Process each fetched symbol
+            for item in fno_symbols:
+                symbol = item["symbol"]
+                stmt = select(FnOUniverse).where(FnOUniverse.symbol == symbol)
+                result = await db.execute(stmt)
+                existing = result.scalars().first()
+                
+                if not existing:
+                    new_symbol = FnOUniverse(
+                        symbol=symbol,
+                        instrument_type=item["instrument_type"],
+                        lot_size=item["lot_size"],
+                        is_active=True,
+                        added_date=date.today()
+                    )
+                    db.add(new_symbol)
+                    added_count += 1
+                else:
+                    # Update if lot size, activity, or type changed
+                    changed = False
+                    if existing.lot_size != item["lot_size"]:
+                        logger.info(f"Updating lot size for {symbol}: {existing.lot_size} -> {item['lot_size']}")
+                        existing.lot_size = item["lot_size"]
+                        changed = True
+                    if not existing.is_active:
+                        logger.info(f"Re-activating F&O symbol: {symbol}")
+                        existing.is_active = True
+                        existing.removed_date = None
+                        changed = True
+                    if existing.instrument_type != item["instrument_type"]:
+                        existing.instrument_type = item["instrument_type"]
+                        changed = True
+                        
+                    if changed:
+                        updated_count += 1
+                        
+            # Deactivate active symbols in the DB that are not in the fetched list
+            stmt_active = select(FnOUniverse).where(FnOUniverse.is_active == True)
+            result_active = await db.execute(stmt_active)
+            db_active_symbols = result_active.scalars().all()
+            
+            for db_item in db_active_symbols:
+                if db_item.symbol not in fetched_symbols:
+                    logger.info(f"Deactivating F&O symbol: {db_item.symbol} (no longer in NSE active list)")
+                    db_item.is_active = False
+                    db_item.removed_date = date.today()
+                    deactivated_count += 1
+                    
+            logger.info(f"F&O universe sync complete: added {added_count}, updated {updated_count}, deactivated {deactivated_count}")
+        else:
+            logger.warning("No F&O symbols retrieved from NSE. Skipping database sync to protect existing data.")
+    except Exception as e:
+        logger.error(f"Error during F&O universe sync: {e}")
+        raise
+    finally:
+        await scraper.close()
+
+
 async def _async_daily_pipeline():
     """Async implementation of the daily pipeline."""
     from app.core.database import async_session_factory
@@ -52,7 +129,15 @@ async def _async_daily_pipeline():
 
     try:
         async with async_session_factory() as db:
-            # 1. Get F&O universe
+            # 1. Sync F&O universe first
+            try:
+                await sync_fno_universe(db)
+                await db.commit()
+            except Exception as e:
+                logger.error(f"Failed to sync F&O universe before daily run: {e}")
+                await db.rollback()
+
+            # 2. Get F&O universe
             fno_query = select(FnOUniverse).where(FnOUniverse.is_active == True)
             fno_result = await db.execute(fno_query)
             fno_symbols = {r.symbol for r in fno_result.scalars().all()}

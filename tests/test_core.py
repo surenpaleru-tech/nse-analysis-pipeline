@@ -261,3 +261,30 @@ class TestNSEScraper:
             assert result is False
 
         await scraper.close()
+
+    @pytest.mark.asyncio
+    async def test_fetch_fno_symbols_success(self):
+        from app.ingestion.nse_scraper import NSEScraper
+        scraper = NSEScraper()
+
+        csv_content = (
+            "UNDERLYING,SYMBOL,JUN-26\n"
+            "NIFTY 50,NIFTY,65\n"
+            "NIFTY BANK,BANKNIFTY,30\n"
+            "Derivatives on Individual Securities,Symbol,JUN-26\n"
+            "ABB INDIA LIMITED,ABB,125\n"
+        )
+
+        with patch.object(scraper, "_rate_limited_request") as mock_req:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.text = csv_content
+            mock_req.return_value = mock_resp
+            
+            result = await scraper.fetch_fno_symbols()
+            assert len(result) == 3
+            assert result[0] == {"symbol": "NIFTY", "instrument_type": "index", "lot_size": 65}
+            assert result[1] == {"symbol": "BANKNIFTY", "instrument_type": "index", "lot_size": 30}
+            assert result[2] == {"symbol": "ABB", "instrument_type": "stock", "lot_size": 125}
+
+        await scraper.close()
