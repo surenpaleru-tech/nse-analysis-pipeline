@@ -58,6 +58,17 @@ def main():
         settings = get_settings()
         parsed = urlparse(settings.database_url)
         print(f"[{datetime.now().isoformat()}] Database host target (AFTER config load): {parsed.hostname}:{parsed.port or 5432}")
+        print(f"[{datetime.now().isoformat()}] REPR of settings.database_url: {repr(settings.database_url)}")
+        print(f"[{datetime.now().isoformat()}] REPR of parsed.hostname: {repr(parsed.hostname)}")
+
+        # Dynamic socket-level DNS resolution of parsed hostname
+        if parsed.hostname:
+            try:
+                addr_info = socket.getaddrinfo(parsed.hostname, 80)
+                resolved_ips = list(set([info[4][0] for info in addr_info]))
+                print(f"[{datetime.now().isoformat()}] DNS Resolve of parsed.hostname ({repr(parsed.hostname)}) -> {resolved_ips}")
+            except Exception as se:
+                print(f"[{datetime.now().isoformat()}] DNS Resolve FAILED for parsed.hostname ({repr(parsed.hostname)}): {se}")
         
         # Check raw os.environ value after config/dotenv load
         raw_after = os.environ.get("DATABASE_URL", "NOT_SET")

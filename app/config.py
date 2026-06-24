@@ -49,6 +49,7 @@ class Settings(BaseSettings):
         """
         raw_url = self.database_url_override or os.environ.get("DATABASE_URL")
         if raw_url:
+            raw_url = raw_url.strip()
             # Supabase gives postgresql:// — convert to asyncpg driver
             if raw_url.startswith("postgresql://"):
                 return raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
@@ -65,6 +66,7 @@ class Settings(BaseSettings):
         """Returns sync database URL."""
         raw_url = self.database_url_override or os.environ.get("DATABASE_URL")
         if raw_url:
+            raw_url = raw_url.strip()
             if raw_url.startswith("postgresql+asyncpg://"):
                 return raw_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
             if raw_url.startswith("postgresql://"):
