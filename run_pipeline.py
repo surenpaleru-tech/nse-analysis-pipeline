@@ -30,6 +30,16 @@ def main():
 
     print(f"[{datetime.now().isoformat()}] Pipeline runner started")
 
+    # Log database connection target (excluding credentials) for debugging
+    try:
+        from app.config import get_settings
+        from urllib.parse import urlparse
+        settings = get_settings()
+        parsed = urlparse(settings.database_url)
+        print(f"[{datetime.now().isoformat()}] Database host target: {parsed.hostname}:{parsed.port or 5432}")
+    except Exception as e:
+        print(f"[{datetime.now().isoformat()}] Could not parse database URL: {e}")
+
     try:
         if args.backfill:
             start_date, end_date = args.backfill
