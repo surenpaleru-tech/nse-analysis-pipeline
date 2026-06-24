@@ -8,7 +8,6 @@ from typing import Optional
 import polars as pl
 
 from app.core.logging import get_logger
-from app.core.exceptions import DataValidationError
 
 logger = get_logger(__name__)
 
