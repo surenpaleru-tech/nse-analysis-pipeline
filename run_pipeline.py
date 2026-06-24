@@ -44,6 +44,16 @@ def main():
         else:
             print(f"[{datetime.now().isoformat()}] Raw env DATABASE_URL (BEFORE config load): NOT_SET")
 
+        # Test socket-level DNS resolution
+        import socket
+        for test_host in ["google.com", "aws-0-us-west-2.pooler.supabase.com", "db.gmmykegxgdtheqjvaufu.supabase.co"]:
+            try:
+                addr_info = socket.getaddrinfo(test_host, 80)
+                resolved_ips = list(set([info[4][0] for info in addr_info]))
+                print(f"[{datetime.now().isoformat()}] DNS Resolve {test_host} -> {resolved_ips}")
+            except Exception as se:
+                print(f"[{datetime.now().isoformat()}] DNS Resolve FAILED for {test_host}: {se}")
+
         from app.config import get_settings
         settings = get_settings()
         parsed = urlparse(settings.database_url)
