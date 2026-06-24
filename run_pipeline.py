@@ -32,6 +32,8 @@ def main():
 
     # Log database connection target (excluding credentials) for debugging
     try:
+        import os
+        print(f"[{datetime.now().isoformat()}] Available env keys: {sorted(list(os.environ.keys()))}")
         from app.config import get_settings
         from urllib.parse import urlparse
         settings = get_settings()
