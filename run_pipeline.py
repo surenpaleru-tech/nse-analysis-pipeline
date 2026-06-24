@@ -30,53 +30,7 @@ def main():
 
     print(f"[{datetime.now().isoformat()}] Pipeline runner started")
 
-    # Log database connection target (excluding credentials) for debugging
-    try:
-        import os
-        from urllib.parse import urlparse
-        print(f"[{datetime.now().isoformat()}] Available env keys: {sorted(list(os.environ.keys()))}")
-        
-        # Check raw os.environ value before loading any config/dotenv
-        raw_before = os.environ.get("DATABASE_URL", "NOT_SET")
-        if raw_before != "NOT_SET":
-            parsed_before = urlparse(raw_before)
-            print(f"[{datetime.now().isoformat()}] Raw env DATABASE_URL host (BEFORE config load): {parsed_before.hostname}:{parsed_before.port or 5432}")
-        else:
-            print(f"[{datetime.now().isoformat()}] Raw env DATABASE_URL (BEFORE config load): NOT_SET")
 
-        # Test socket-level DNS resolution
-        import socket
-        for test_host in ["google.com", "aws-0-us-west-2.pooler.supabase.com", "db.gmmykegxgdtheqjvaufu.supabase.co"]:
-            try:
-                addr_info = socket.getaddrinfo(test_host, 80)
-                resolved_ips = list(set([info[4][0] for info in addr_info]))
-                print(f"[{datetime.now().isoformat()}] DNS Resolve {test_host} -> {resolved_ips}")
-            except Exception as se:
-                print(f"[{datetime.now().isoformat()}] DNS Resolve FAILED for {test_host}: {se}")
-
-        from app.config import get_settings
-        settings = get_settings()
-        parsed = urlparse(settings.database_url)
-        print(f"[{datetime.now().isoformat()}] Database host target (AFTER config load): {parsed.hostname}:{parsed.port or 5432}")
-        print(f"[{datetime.now().isoformat()}] REPR of settings.database_url: {repr(settings.database_url)}")
-        print(f"[{datetime.now().isoformat()}] REPR of parsed.hostname: {repr(parsed.hostname)}")
-
-        # Dynamic socket-level DNS resolution of parsed hostname
-        if parsed.hostname:
-            try:
-                addr_info = socket.getaddrinfo(parsed.hostname, 80)
-                resolved_ips = list(set([info[4][0] for info in addr_info]))
-                print(f"[{datetime.now().isoformat()}] DNS Resolve of parsed.hostname ({repr(parsed.hostname)}) -> {resolved_ips}")
-            except Exception as se:
-                print(f"[{datetime.now().isoformat()}] DNS Resolve FAILED for parsed.hostname ({repr(parsed.hostname)}): {se}")
-        
-        # Check raw os.environ value after config/dotenv load
-        raw_after = os.environ.get("DATABASE_URL", "NOT_SET")
-        if raw_after != "NOT_SET":
-            parsed_after = urlparse(raw_after)
-            print(f"[{datetime.now().isoformat()}] Raw env DATABASE_URL host (AFTER config load): {parsed_after.hostname}:{parsed_after.port or 5432}")
-    except Exception as e:
-        print(f"[{datetime.now().isoformat()}] Error during database URL check: {e}")
 
     try:
         if args.backfill:
