@@ -130,12 +130,15 @@ class NSEScraper(DataSource):
                 follow_redirects=True,
                 verify=True,
             )
-            # Initialize session by visiting NSE homepage
+            # Try to initialize session — but don't block if it fails.
+            # The archive CDN (nsearchives.nseindia.com) works independently
+            # from the main website (www.nseindia.com), so we can still
+            # download bhavcopies even if session init returns 403.
             await self._init_session()
         return self._client
 
     async def _init_session(self):
-        """Initialize NSE session to get cookies."""
+        """Initialize NSE session to get cookies (best-effort)."""
         try:
             headers = self._get_headers()
             response = await self._client.get(NSE_BASE_URL, headers=headers)
@@ -143,9 +146,13 @@ class NSEScraper(DataSource):
                 self._cookies = dict(response.cookies)
                 logger.info("NSE session initialized successfully")
             else:
-                logger.warning(f"NSE session init returned status {response.status_code}")
+                # 403 is common from cloud IPs — archive downloads still work
+                logger.warning(
+                    f"NSE session init returned status {response.status_code} "
+                    f"(archive downloads may still work without cookies)"
+                )
         except Exception as e:
-            logger.error(f"Failed to initialize NSE session: {e}")
+            logger.warning(f"NSE session init failed: {e} (continuing without session cookies)")
 
     def _get_headers(self) -> dict:
         """Get request headers with rotating user agent."""
@@ -205,8 +212,11 @@ class NSEScraper(DataSource):
             response = await self._rate_limited_request(udiff_url)
             is_udiff = True
 
-            if response.status_code == 404:
-                logger.info(f"UDiFF F&O bhavcopy not found for {trade_date}, trying legacy URL", url=legacy_url)
+            if response.status_code != 200:
+                logger.info(
+                    f"UDiFF F&O bhavcopy not available for {trade_date} (status {response.status_code}), trying legacy URL",
+                    url=legacy_url,
+                )
                 response = await self._rate_limited_request(legacy_url)
                 is_udiff = False
 
@@ -216,7 +226,7 @@ class NSEScraper(DataSource):
 
             if response.status_code != 200:
                 logger.warning(
-                    f"F&O bhavcopy request failed",
+                    f"F&O bhavcopy request failed on both UDiFF and legacy URLs",
                     status=response.status_code,
                     date=str(trade_date),
                 )
@@ -277,16 +287,24 @@ class NSEScraper(DataSource):
             response = await self._rate_limited_request(udiff_url)
             is_udiff = True
 
-            if response.status_code == 404:
-                logger.info(f"UDiFF equity bhavcopy not found for {trade_date}, trying legacy URL", url=legacy_url)
+            if response.status_code != 200:
+                logger.info(
+                    f"UDiFF equity bhavcopy not available for {trade_date} (status {response.status_code}), trying legacy URL",
+                    url=legacy_url,
+                )
                 response = await self._rate_limited_request(legacy_url)
                 is_udiff = False
 
             if response.status_code == 404:
-                logger.info(f"No equity bhavcopy for {trade_date}")
+                logger.info(f"No equity bhavcopy for {trade_date} (holiday or weekend)")
                 return None
 
             if response.status_code != 200:
+                logger.warning(
+                    f"Equity bhavcopy request failed on both UDiFF and legacy URLs",
+                    status=response.status_code,
+                    date=str(trade_date),
+                )
                 return None
 
             with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
