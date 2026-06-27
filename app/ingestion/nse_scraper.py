@@ -81,6 +81,7 @@ def _normalize_udiff_df(df: pl.DataFrame, is_fo: bool = False) -> pl.DataFrame:
         "TtlTrfVal": "VAL_INLAKH",
         "OpnIntrst": "OPEN_INT",
         "ChngInOpnIntrst": "CHG_IN_OI",
+        "UndrlygPric": "UNDERLYING_VAL",
     }
     
     rename_dict = {}

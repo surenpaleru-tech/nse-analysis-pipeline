@@ -85,6 +85,14 @@ class OptionCollector:
 
             expiry_type = self._classify_expiry_type(symbol, expiry_date)
             underlying_price = spot_prices.get(symbol)
+            if not underlying_price:
+                raw_und_val = row.get("underlying_val") or row.get("underlying_price") or row.get("underlying")
+                underlying_price = self._safe_float(raw_und_val)
+                if symbol in self.INDEX_SYMBOLS and underlying_price and symbol not in spot_prices:
+                    from app.ingestion.spot_collector import SpotCollector
+                    spot_collector = SpotCollector(self.db)
+                    await spot_collector.store_index_spot(symbol, trade_date, underlying_price)
+                    spot_prices[symbol] = underlying_price
 
             # For index options, skip weekly for stocks, monthly for non-monthly index
             instrument = row.get("instrument", "")
