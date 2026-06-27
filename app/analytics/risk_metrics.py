@@ -118,17 +118,27 @@ def calculate_risk_metrics(
     both_worthless = np.array(ce_worthless) & np.array(pe_worthless)
     combined_prob = float(np.mean(both_worthless)) if len(both_worthless) > 0 else 0.0
 
+    # Clamp metrics to prevent DECIMAL(8,4) overflow in database
+    def clamp_decimal_8_4(val: float) -> float:
+        try:
+            val_float = float(val)
+            if np.isnan(val_float) or np.isinf(val_float):
+                return 0.0
+            return max(-9999.0, min(9999.0, val_float))
+        except (ValueError, TypeError):
+            return 0.0
+
     return RiskMetrics(
         win_rate=round(win_rate, 4),
         avg_profit=round(avg_profit, 2),
         avg_loss=round(avg_loss, 2),
         expected_value=round(expected_value, 2),
         max_drawdown=round(max_drawdown, 2),
-        profit_factor=round(min(profit_factor, 999.99), 4),
-        sharpe_ratio=round(sharpe_ratio, 4),
-        sortino_ratio=round(sortino_ratio, 4),
-        calmar_ratio=round(calmar_ratio, 4),
-        kelly_criterion=round(kelly_criterion, 4),
+        profit_factor=round(clamp_decimal_8_4(profit_factor), 4),
+        sharpe_ratio=round(clamp_decimal_8_4(sharpe_ratio), 4),
+        sortino_ratio=round(clamp_decimal_8_4(sortino_ratio), 4),
+        calmar_ratio=round(clamp_decimal_8_4(calmar_ratio), 4),
+        kelly_criterion=round(clamp_decimal_8_4(kelly_criterion), 4),
         prob_ce_worthless=round(prob_ce, 4),
         prob_pe_worthless=round(prob_pe, 4),
         combined_prob_worthless=round(combined_prob, 4),
