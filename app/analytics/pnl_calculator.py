@@ -103,6 +103,16 @@ class PnLCalculator:
         spot_at_entry = spot_result.scalar_one_or_none()
 
         if not spot_at_entry:
+            # Fallback to OptionChain
+            from app.models import OptionChain
+            fall_q = select(OptionChain.underlying_price).where(
+                OptionChain.symbol == symbol,
+                OptionChain.trade_date == entry_date,
+            ).limit(1)
+            fall_res = await db.execute(fall_q)
+            spot_at_entry = fall_res.scalar()
+
+        if not spot_at_entry:
             return 0
 
         spot_at_entry = float(spot_at_entry)
@@ -114,7 +124,26 @@ class PnLCalculator:
         )
         spot_expiry_result = await self.db.execute(spot_expiry_query)
         spot_at_expiry = spot_expiry_result.scalar_one_or_none()
-        spot_at_expiry = float(spot_at_expiry) if spot_at_expiry else spot_at_entry
+        
+        if not spot_at_expiry:
+            # Fallback to OptionChain
+            from app.models import OptionChain
+            fall_exp_q = select(OptionChain.underlying_price).where(
+                OptionChain.symbol == symbol,
+                OptionChain.trade_date == expiry_date,
+            ).limit(1)
+            fall_exp_res = await db.execute(fall_exp_q)
+            spot_at_expiry = fall_exp_res.scalar()
+
+        if not spot_at_expiry:
+            logger.warning(
+                "Skipping expiry P&L calculation - missing spot price at expiry",
+                symbol=symbol,
+                expiry=str(expiry_date),
+            )
+            return 0
+
+        spot_at_expiry = float(spot_at_expiry)
 
         # Get OTM strikes at entry
         otm_strikes = await self.otm_calc.get_otm_strikes_for_expiry(
