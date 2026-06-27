@@ -176,7 +176,7 @@ class DailyRecommendationPipeline:
                 query = query.where(OptimalSellingBand.market_regime.is_(None))
 
             result = await self.db.execute(query)
-            band = result.scalar_one_or_none()
+            band = result.scalars().first()
             if band:
                 break
 
