@@ -206,7 +206,7 @@ class DailyRecommendationPipeline:
             "ce_probability": float(band.ce_win_rate) if band.ce_win_rate else None,
             "pe_probability": float(band.pe_win_rate) if band.pe_win_rate else None,
             "combined_probability": float(band.combined_win_rate) if band.combined_win_rate else None,
-            "expected_return": float(band.expected_value) if band.expected_value else None,
+            "expected_return": max(-9999.0, min(9999.0, float(band.expected_value))) if band.expected_value else None,
             "risk_score": risk_score,
             "vix_at_recommendation": vix,
             "market_regime": market_regime,
