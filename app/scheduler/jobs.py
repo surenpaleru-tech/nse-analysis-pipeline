@@ -129,6 +129,31 @@ async def _async_daily_pipeline():
 
     try:
         async with async_session_factory() as db:
+            # Ensure unique constraint exists on daily_recommendations
+            from sqlalchemy import text
+            try:
+                res = await db.execute(text("""
+                    SELECT 1 FROM pg_constraint WHERE conname = 'uq_dr_date_symbol_expiry';
+                """))
+                if not res.scalar():
+                    logger.info("Unique constraint uq_dr_date_symbol_expiry missing. Creating...")
+                    await db.execute(text("""
+                        DELETE FROM daily_recommendations a USING daily_recommendations b 
+                        WHERE a.id < b.id 
+                          AND a.date = b.date 
+                          AND a.symbol = b.symbol 
+                          AND a.expiry_type = b.expiry_type;
+                    """))
+                    await db.execute(text("""
+                        ALTER TABLE daily_recommendations 
+                        ADD CONSTRAINT uq_dr_date_symbol_expiry UNIQUE (date, symbol, expiry_type);
+                    """))
+                    await db.commit()
+                    logger.info("Successfully created unique constraint on daily_recommendations table")
+            except Exception as e:
+                logger.error(f"Error checking/creating daily_recommendations constraint: {e}")
+                await db.rollback()
+
             # 1. Sync F&O universe first
             try:
                 await sync_fno_universe(db)

@@ -57,6 +57,13 @@ class BandOptimizer:
         Returns total number of optimal band records created.
         """
         logger.info(f"Optimizing bands for {symbol} ({expiry_type})")
+        from sqlalchemy import delete
+        await self.db.execute(
+            delete(OptimalSellingBand).where(
+                OptimalSellingBand.symbol == symbol,
+                OptimalSellingBand.expiry_type == expiry_type,
+            )
+        )
         total = 0
 
         for period_name, period_days in ANALYSIS_PERIODS.items():
@@ -219,18 +226,4 @@ class BandOptimizer:
 
     async def _upsert_band(self, record: dict) -> None:
         """Upsert an optimal selling band record."""
-        stmt = insert(OptimalSellingBand).values(record)
-        # Use update on conflict for the unique constraint
-        update_cols = {k: stmt.excluded[k] for k in record if k not in (
-            "symbol", "instrument_type", "expiry_type", "analysis_period",
-            "vix_regime", "market_regime", "optimization_mode",
-        )}
-        stmt = stmt.on_conflict_do_update(
-            constraint="optimal_selling_bands_symbol_instrument_type_expiry_type_ana_key",
-            set_=update_cols,
-        )
-        try:
-            await self.db.execute(stmt)
-        except Exception:
-            # Fallback: try without constraint name
-            await self.db.merge(OptimalSellingBand(**record))
+        self.db.add(OptimalSellingBand(**record))
