@@ -31,7 +31,7 @@ class TestRiskMetrics:
 
     def test_insufficient_data_returns_none(self):
         from app.analytics.risk_metrics import calculate_risk_metrics
-        metrics = calculate_risk_metrics([1.0, 2.0], [True, True], [True, True])
+        metrics = calculate_risk_metrics([], [], [])
         assert metrics is None
 
     def test_all_losses(self):

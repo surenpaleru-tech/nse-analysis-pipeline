@@ -49,7 +49,7 @@ def calculate_risk_metrics(
     Returns:
         RiskMetrics dataclass or None if insufficient data
     """
-    if len(pnl_series) < 5:
+    if len(pnl_series) < 1:
         return None
 
     pnl = np.array(pnl_series, dtype=np.float64)

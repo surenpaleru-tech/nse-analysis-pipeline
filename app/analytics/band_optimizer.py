@@ -136,7 +136,7 @@ class BandOptimizer:
                 if r.vix_at_entry is not None and self._classify_vix(float(r.vix_at_entry)) == vix_regime
             ]
 
-        if len(all_results) < 5:
+        if len(all_results) < 1:
             return None
 
         # Group by CE/PE combination
