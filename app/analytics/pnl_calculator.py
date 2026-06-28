@@ -89,6 +89,17 @@ class PnLCalculator:
         market_regimes: Optional[dict] = None,
     ) -> int:
         """Compute P&L for all CE/PE combinations for a single expiry."""
+        # Historical strategy results should represent completed expiries only.
+        # Ongoing or future contracts are surfaced separately in the app using
+        # live option-chain snapshots.
+        if expiry_date > date.today():
+            logger.info(
+                "Skipping ongoing/future expiry for historical P&L storage",
+                symbol=symbol,
+                expiry=str(expiry_date),
+            )
+            return 0
+
         # Get entry date
         entry_date = await self.otm_calc.get_entry_date_for_expiry(symbol, expiry_date)
         if not entry_date:
@@ -130,18 +141,6 @@ class PnLCalculator:
         # Determine exit date and spot at exit
         exit_date = expiry_date
         spot_at_expiry = None
-
-        if expiry_date > date.today():
-            # If the expiry date is in the future, we fall back to the latest available option chain date
-            from app.models import OptionChain
-            latest_q = select(func.max(OptionChain.trade_date)).where(
-                OptionChain.symbol == symbol,
-                OptionChain.expiry == expiry_date,
-            )
-            latest_res = await self.db.execute(latest_q)
-            latest_trade_date = latest_res.scalar()
-            if latest_trade_date:
-                exit_date = latest_trade_date
 
         # Get spot at exit_date
         spot_expiry_query = select(SpotPrice.close).where(
