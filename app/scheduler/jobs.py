@@ -114,8 +114,9 @@ async def sync_fno_universe(db):
 
 async def _async_daily_pipeline():
     """Async implementation of the daily pipeline."""
-    from app.core.database import async_session_factory
+    from app.core.database import Base, async_session_factory, engine
     from app.ingestion.nse_scraper import NSEScraper
+    from app.ingestion.futures_collector import FuturesCollector
     from app.ingestion.option_collector import OptionCollector
     from app.ingestion.spot_collector import SpotCollector
     from app.ingestion.vix_collector import VIXCollector
@@ -128,6 +129,9 @@ async def _async_daily_pipeline():
     validator = DataValidator()
 
     try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
         async with async_session_factory() as db:
             # Ensure unique constraint exists on daily_recommendations
             from sqlalchemy import text
@@ -188,6 +192,8 @@ async def _async_daily_pipeline():
                 if valid or len(issues) < 3:
                     option_collector = OptionCollector(db)
                     await option_collector.process_bhavcopy(fo_df, today, spot_prices)
+                    futures_collector = FuturesCollector(db)
+                    await futures_collector.process_bhavcopy(fo_df, today, spot_prices)
 
             # 4. Download VIX
             vix_collector = VIXCollector(db, scraper)
@@ -236,7 +242,6 @@ async def _async_daily_pipeline():
 
     finally:
         await scraper.close()
-        from app.core.database import engine
         await engine.dispose()
         logger.info("Database engine connections disposed")
 
@@ -249,8 +254,9 @@ def backfill_data(start_date_str: str, end_date_str: str):
 
 async def _async_backfill(start_str: str, end_str: str):
     """Async backfill implementation."""
-    from app.core.database import async_session_factory
+    from app.core.database import Base, async_session_factory, engine
     from app.ingestion.nse_scraper import NSEScraper
+    from app.ingestion.futures_collector import FuturesCollector
     from app.ingestion.option_collector import OptionCollector
     from app.ingestion.spot_collector import SpotCollector
     from app.ingestion.vix_collector import VIXCollector
@@ -265,6 +271,9 @@ async def _async_backfill(start_str: str, end_str: str):
     validator = DataValidator()
 
     try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
         async with async_session_factory() as db:
             fno_query = select(FnOUniverse).where(FnOUniverse.is_active == True)
             fno_result = await db.execute(fno_query)
@@ -295,6 +304,8 @@ async def _async_backfill(start_str: str, end_str: str):
                     if fo_df is not None:
                         option_collector = OptionCollector(db)
                         await option_collector.process_bhavcopy(fo_df, current, spot_prices)
+                        futures_collector = FuturesCollector(db)
+                        await futures_collector.process_bhavcopy(fo_df, current, spot_prices)
 
                     # VIX
                     vix_collector = VIXCollector(db, scraper)
@@ -313,6 +324,5 @@ async def _async_backfill(start_str: str, end_str: str):
 
     finally:
         await scraper.close()
-        from app.core.database import engine
         await engine.dispose()
         logger.info("Database engine connections disposed")

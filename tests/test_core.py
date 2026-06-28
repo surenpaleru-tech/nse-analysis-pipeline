@@ -5,6 +5,7 @@ import pytest
 import asyncio
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
+import polars as pl
 
 
 # =============================================================================
@@ -250,6 +251,46 @@ class TestNSEScraper:
             assert result is None
 
         await scraper.close()
+
+
+# =============================================================================
+# Futures Collector Tests
+# =============================================================================
+
+class TestFuturesCollector:
+    """Tests for futures bhavcopy normalization and upsert flow."""
+
+    @pytest.mark.asyncio
+    async def test_process_bhavcopy_extracts_futures_rows(self):
+        from app.ingestion.futures_collector import FuturesCollector
+
+        mock_db = AsyncMock()
+        collector = FuturesCollector(mock_db)
+        df = pl.DataFrame(
+            {
+                "INSTRUMENT": ["FUTIDX", "FUTSTK", "OPTSTK"],
+                "SYMBOL": ["NIFTY", "RELIANCE", "RELIANCE"],
+                "EXPIRY_DT": ["30-Jun-2026", "30-Jun-2026", "30-Jun-2026"],
+                "OPEN": [25010.0, 1490.0, 12.0],
+                "HIGH": [25120.0, 1512.0, 15.0],
+                "LOW": [24920.0, 1478.0, 8.0],
+                "CLOSE": [25055.0, 1504.0, 11.0],
+                "SETTLE_PR": [25060.0, 1503.5, 10.8],
+                "CONTRACTS": [1000, 450, 900],
+                "VAL_INLAKH": [320000.0, 54000.0, 18000.0],
+                "OPEN_INT": [120000, 43000, 55000],
+                "CHG_IN_OI": [2000, -500, 1100],
+            }
+        )
+
+        inserted = await collector.process_bhavcopy(
+            df,
+            date(2026, 6, 28),
+            {"NIFTY": 25000.0, "RELIANCE": 1498.0},
+        )
+
+        assert inserted == 2
+        assert mock_db.execute.await_count == 1
 
     @pytest.mark.asyncio
     async def test_is_available_false_on_connection_error(self):
