@@ -166,30 +166,114 @@ class OTMDistanceCalculator:
     ) -> Optional[date]:
         """
         Get the entry date for a given expiry.
-        If days_before=0, returns the first trading day with data for this expiry.
+        If days_before=0:
+            For weekly: returns the first available trading day for this expiry.
+            For monthly: returns the first trading day after the previous monthly expiry,
+                         or the first trading day of the month if no previous expiry is found.
         """
+        # Determine expiry type
+        type_query = select(OptionChain.expiry_type).where(
+            OptionChain.symbol == symbol,
+            OptionChain.expiry == expiry_date
+        ).limit(1)
+        type_res = await self.db.execute(type_query)
+        expiry_type = type_res.scalar() or "monthly"
+
         if days_before == 0:
-            # For weekly: entry on Monday of expiry week
-            # For monthly: entry on first trading day after previous expiry
-            # Simplified: use the first available trading day for this expiry
-            query = (
-                select(func.min(OptionChain.trade_date))
-                .where(
-                    OptionChain.symbol == symbol,
-                    OptionChain.expiry == expiry_date,
+            if expiry_type == "weekly":
+                query = (
+                    select(func.min(OptionChain.trade_date))
+                    .where(
+                        OptionChain.symbol == symbol,
+                        OptionChain.expiry == expiry_date,
+                    )
                 )
-            )
+            else:
+                # Find previous monthly expiry
+                prev_expiry_query = (
+                    select(distinct(OptionChain.expiry))
+                    .where(
+                        OptionChain.symbol == symbol,
+                        OptionChain.expiry_type == "monthly",
+                        OptionChain.expiry < expiry_date,
+                    )
+                    .order_by(OptionChain.expiry.desc())
+                    .limit(1)
+                )
+                prev_res = await self.db.execute(prev_expiry_query)
+                prev_expiry = prev_res.scalar()
+
+                if prev_expiry:
+                    query = (
+                        select(func.min(OptionChain.trade_date))
+                        .where(
+                            OptionChain.symbol == symbol,
+                            OptionChain.expiry == expiry_date,
+                            OptionChain.trade_date > prev_expiry,
+                        )
+                    )
+                else:
+                    first_of_month = date(expiry_date.year, expiry_date.month, 1)
+                    query = (
+                        select(func.min(OptionChain.trade_date))
+                        .where(
+                            OptionChain.symbol == symbol,
+                            OptionChain.expiry == expiry_date,
+                            OptionChain.trade_date >= first_of_month,
+                        )
+                    )
         else:
-            query = (
-                select(OptionChain.trade_date)
-                .where(
-                    OptionChain.symbol == symbol,
-                    OptionChain.expiry == expiry_date,
+            if expiry_type == "weekly":
+                query = (
+                    select(OptionChain.trade_date)
+                    .where(
+                        OptionChain.symbol == symbol,
+                        OptionChain.expiry == expiry_date,
+                    )
+                    .order_by(OptionChain.trade_date)
+                    .offset(days_before)
+                    .limit(1)
                 )
-                .order_by(OptionChain.trade_date)
-                .offset(days_before)
-                .limit(1)
-            )
+            else:
+                # Find previous monthly expiry
+                prev_expiry_query = (
+                    select(distinct(OptionChain.expiry))
+                    .where(
+                        OptionChain.symbol == symbol,
+                        OptionChain.expiry_type == "monthly",
+                        OptionChain.expiry < expiry_date,
+                    )
+                    .order_by(OptionChain.expiry.desc())
+                    .limit(1)
+                )
+                prev_res = await self.db.execute(prev_expiry_query)
+                prev_expiry = prev_res.scalar()
+
+                if prev_expiry:
+                    query = (
+                        select(OptionChain.trade_date)
+                        .where(
+                            OptionChain.symbol == symbol,
+                            OptionChain.expiry == expiry_date,
+                            OptionChain.trade_date > prev_expiry,
+                        )
+                        .order_by(OptionChain.trade_date)
+                        .offset(days_before)
+                        .limit(1)
+                    )
+                else:
+                    first_of_month = date(expiry_date.year, expiry_date.month, 1)
+                    query = (
+                        select(OptionChain.trade_date)
+                        .where(
+                            OptionChain.symbol == symbol,
+                            OptionChain.expiry == expiry_date,
+                            OptionChain.trade_date >= first_of_month,
+                        )
+                        .order_by(OptionChain.trade_date)
+                        .offset(days_before)
+                        .limit(1)
+                    )
 
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
