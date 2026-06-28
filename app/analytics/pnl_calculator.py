@@ -109,7 +109,7 @@ class PnLCalculator:
                 OptionChain.symbol == symbol,
                 OptionChain.trade_date == entry_date,
             ).limit(1)
-            fall_res = await db.execute(fall_q)
+            fall_res = await self.db.execute(fall_q)
             spot_at_entry = fall_res.scalar()
 
         if not spot_at_entry:
@@ -132,7 +132,7 @@ class PnLCalculator:
                 OptionChain.symbol == symbol,
                 OptionChain.trade_date == expiry_date,
             ).limit(1)
-            fall_exp_res = await db.execute(fall_exp_q)
+            fall_exp_res = await self.db.execute(fall_exp_q)
             spot_at_expiry = fall_exp_res.scalar()
 
         if not spot_at_expiry:
