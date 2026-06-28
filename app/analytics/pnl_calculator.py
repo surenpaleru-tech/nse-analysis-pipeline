@@ -89,18 +89,19 @@ class PnLCalculator:
         market_regimes: Optional[dict] = None,
     ) -> int:
         """Compute P&L for all CE/PE combinations for a single expiry."""
-        # Skip if expiry date is in the future
-        if expiry_date > date.today():
-            logger.info(
-                "Skipping future expiry P&L calculation",
-                symbol=symbol,
-                expiry=str(expiry_date),
-            )
-            return 0
-
         # Get entry date
         entry_date = await self.otm_calc.get_entry_date_for_expiry(symbol, expiry_date)
         if not entry_date:
+            return 0
+
+        # Skip if the entry date is in the future (trade hasn't started yet)
+        if entry_date > date.today():
+            logger.info(
+                "Skipping future expiry P&L calculation - entry date is in the future",
+                symbol=symbol,
+                expiry=str(expiry_date),
+                entry_date=str(entry_date),
+            )
             return 0
 
         # Get spot price at entry
@@ -126,10 +127,26 @@ class PnLCalculator:
 
         spot_at_entry = float(spot_at_entry)
 
-        # Get spot at expiry
+        # Determine exit date and spot at exit
+        exit_date = expiry_date
+        spot_at_expiry = None
+
+        if expiry_date > date.today():
+            # If the expiry date is in the future, we fall back to the latest available option chain date
+            from app.models import OptionChain
+            latest_q = select(func.max(OptionChain.trade_date)).where(
+                OptionChain.symbol == symbol,
+                OptionChain.expiry == expiry_date,
+            )
+            latest_res = await self.db.execute(latest_q)
+            latest_trade_date = latest_res.scalar()
+            if latest_trade_date:
+                exit_date = latest_trade_date
+
+        # Get spot at exit_date
         spot_expiry_query = select(SpotPrice.close).where(
             SpotPrice.symbol == symbol,
-            SpotPrice.date == expiry_date,
+            SpotPrice.date == exit_date,
         )
         spot_expiry_result = await self.db.execute(spot_expiry_query)
         spot_at_expiry = spot_expiry_result.scalar_one_or_none()
@@ -139,16 +156,17 @@ class PnLCalculator:
             from app.models import OptionChain
             fall_exp_q = select(OptionChain.underlying_price).where(
                 OptionChain.symbol == symbol,
-                OptionChain.trade_date == expiry_date,
+                OptionChain.trade_date == exit_date,
             ).limit(1)
             fall_exp_res = await self.db.execute(fall_exp_q)
             spot_at_expiry = fall_exp_res.scalar()
 
         if not spot_at_expiry:
             logger.warning(
-                "Skipping expiry P&L calculation - missing spot price at expiry",
+                "Skipping expiry P&L calculation - missing spot price at exit date",
                 symbol=symbol,
                 expiry=str(expiry_date),
+                exit_date=str(exit_date),
             )
             return 0
 
@@ -161,7 +179,7 @@ class PnLCalculator:
 
         # Get expiry premiums
         expiry_premiums = await self.otm_calc.get_expiry_premiums(
-            symbol, expiry_date, otm_strikes,
+            symbol, expiry_date, otm_strikes, exit_date=exit_date,
         )
 
         # VIX and regime at entry

@@ -106,14 +106,16 @@ class OTMDistanceCalculator:
         symbol: str,
         expiry_date: date,
         strikes: dict[str, dict],
+        exit_date: Optional[date] = None,
     ) -> dict:
         """
-        Get the closing premiums on expiry day for given strikes.
+        Get the closing premiums on expiry day or exit date for given strikes.
 
         Args:
             symbol: The underlying symbol
             expiry_date: The expiry date
             strikes: {"ce": {pct: {"strike": ...}}, "pe": {pct: {"strike": ...}}}
+            exit_date: Optional exit/LTP date
 
         Returns:
             {"ce": {pct: expiry_premium}, "pe": {pct: expiry_premium}}
@@ -128,7 +130,7 @@ class OTMDistanceCalculator:
                     .where(
                         OptionChain.symbol == symbol,
                         OptionChain.expiry == expiry_date,
-                        OptionChain.trade_date == expiry_date,
+                        OptionChain.trade_date == (exit_date or expiry_date),
                         OptionChain.strike == strike,
                         OptionChain.option_type == opt_type.upper(),
                     )
