@@ -89,6 +89,15 @@ class PnLCalculator:
         market_regimes: Optional[dict] = None,
     ) -> int:
         """Compute P&L for all CE/PE combinations for a single expiry."""
+        # Skip if expiry date is in the future
+        if expiry_date > date.today():
+            logger.info(
+                "Skipping future expiry P&L calculation",
+                symbol=symbol,
+                expiry=str(expiry_date),
+            )
+            return 0
+
         # Get entry date
         entry_date = await self.otm_calc.get_entry_date_for_expiry(symbol, expiry_date)
         if not entry_date:
