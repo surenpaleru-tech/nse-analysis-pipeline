@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, Date, Index, Numeric, String
+from sqlalchemy import BigInteger, Boolean, Date, Index, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -33,6 +33,7 @@ class DailyRecommendation(Base):
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
     __table_args__ = (
+        UniqueConstraint("date", "symbol", "expiry_type", name="uq_dr_date_symbol_expiry"),
         Index("idx_dr_date", "date"),
         Index("idx_dr_symbol", "symbol", "date"),
     )

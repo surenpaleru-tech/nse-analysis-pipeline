@@ -51,6 +51,52 @@ def recompute_analytics(trade_date_str: str | None = None):
         raise
 
 
+async def ensure_daily_recommendations_constraint(db) -> None:
+    """Ensure the daily_recommendations upsert constraint exists."""
+    from sqlalchemy import text
+
+    try:
+        res = await db.execute(
+            text(
+                """
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'uq_dr_date_symbol_expiry';
+                """
+            )
+        )
+        if res.scalar():
+            return
+
+        logger.info("Unique constraint uq_dr_date_symbol_expiry missing. Creating...")
+        await db.execute(
+            text(
+                """
+                DELETE FROM daily_recommendations a USING daily_recommendations b
+                WHERE a.id < b.id
+                  AND a.date = b.date
+                  AND a.symbol = b.symbol
+                  AND a.expiry_type = b.expiry_type;
+                """
+            )
+        )
+        await db.execute(
+            text(
+                """
+                ALTER TABLE daily_recommendations
+                ADD CONSTRAINT uq_dr_date_symbol_expiry
+                UNIQUE (date, symbol, expiry_type);
+                """
+            )
+        )
+        await db.commit()
+        logger.info("Successfully created unique constraint on daily_recommendations table")
+    except Exception as e:
+        logger.error(f"Error checking/creating daily_recommendations constraint: {e}")
+        await db.rollback()
+        raise
+
+
 async def sync_fno_universe(db):
     """Sync the F&O stock and index universe and lot sizes dynamically from NSE."""
     from app.ingestion.nse_scraper import NSEScraper
@@ -192,30 +238,7 @@ async def _async_daily_pipeline():
             await conn.run_sync(Base.metadata.create_all)
 
         async with async_session_factory() as db:
-            # Ensure unique constraint exists on daily_recommendations
-            from sqlalchemy import text
-            try:
-                res = await db.execute(text("""
-                    SELECT 1 FROM pg_constraint WHERE conname = 'uq_dr_date_symbol_expiry';
-                """))
-                if not res.scalar():
-                    logger.info("Unique constraint uq_dr_date_symbol_expiry missing. Creating...")
-                    await db.execute(text("""
-                        DELETE FROM daily_recommendations a USING daily_recommendations b 
-                        WHERE a.id < b.id 
-                          AND a.date = b.date 
-                          AND a.symbol = b.symbol 
-                          AND a.expiry_type = b.expiry_type;
-                    """))
-                    await db.execute(text("""
-                        ALTER TABLE daily_recommendations 
-                        ADD CONSTRAINT uq_dr_date_symbol_expiry UNIQUE (date, symbol, expiry_type);
-                    """))
-                    await db.commit()
-                    logger.info("Successfully created unique constraint on daily_recommendations table")
-            except Exception as e:
-                logger.error(f"Error checking/creating daily_recommendations constraint: {e}")
-                await db.rollback()
+            await ensure_daily_recommendations_constraint(db)
 
             # 1. Sync F&O universe first
             try:
@@ -287,6 +310,7 @@ async def _async_recompute_analytics(trade_date_str: str | None = None):
             await conn.run_sync(Base.metadata.create_all)
 
         async with async_session_factory() as db:
+            await ensure_daily_recommendations_constraint(db)
             await _run_analytics_pipeline(db, trade_date=trade_date)
 
     finally:

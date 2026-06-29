@@ -110,7 +110,7 @@ class DailyRecommendationPipeline:
         if records:
             stmt = insert(DailyRecommendation).values(records)
             stmt = stmt.on_conflict_do_update(
-                index_elements=["date", "symbol", "expiry_type"],
+                constraint="uq_dr_date_symbol_expiry",
                 set_={
                     "spot_price": stmt.excluded.spot_price,
                     "recommended_ce_pct": stmt.excluded.recommended_ce_pct,
