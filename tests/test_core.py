@@ -329,3 +329,51 @@ class TestFuturesCollector:
             assert result[2] == {"symbol": "ABB", "instrument_type": "stock", "lot_size": 125}
 
         await scraper.close()
+
+
+# =============================================================================
+# Pipeline DB Guard Tests
+# =============================================================================
+
+class TestPipelineDatabaseGuards:
+    """Tests for early writable-connection validation."""
+
+    def test_describe_database_target_redacts_credentials(self):
+        from app.scheduler.jobs import _describe_database_target
+
+        target = _describe_database_target(
+            "postgresql+asyncpg://postgres:super-secret@db.example.supabase.co:5432/postgres"
+        )
+
+        assert target == "db.example.supabase.co:5432/postgres"
+
+    @pytest.mark.asyncio
+    async def test_ensure_writable_connection_accepts_writable_session(self):
+        from app.scheduler.jobs import ensure_writable_connection
+
+        mock_connection = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = "off"
+        mock_connection.execute.return_value = mock_result
+
+        await ensure_writable_connection(mock_connection, "test run")
+
+    @pytest.mark.asyncio
+    async def test_ensure_writable_connection_rejects_read_only_session(self):
+        from app.scheduler.jobs import ensure_writable_connection
+
+        mock_connection = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = "on"
+        mock_connection.execute.return_value = mock_result
+
+        with patch(
+            "app.config.get_settings",
+            return_value=MagicMock(
+                database_url=(
+                    "postgresql+asyncpg://postgres:secret@db.example.supabase.co:5432/postgres"
+                )
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="read-only"):
+                await ensure_writable_connection(mock_connection, "analytics recompute")

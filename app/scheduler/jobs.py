@@ -7,6 +7,7 @@ instead of Celery. The async functions remain unchanged from the original pipeli
 
 import asyncio
 from datetime import date, timedelta
+from urllib.parse import urlparse
 
 from app.core.logging import get_logger
 
@@ -49,6 +50,49 @@ def recompute_analytics(trade_date_str: str | None = None):
     except Exception as e:
         logger.error(f"Analytics-only recompute failed: {e}")
         raise
+
+
+def _describe_database_target(database_url: str) -> str:
+    """Return a safe host/port/database description for logs and errors."""
+    parsed = urlparse(database_url)
+    host = parsed.hostname or "unknown-host"
+    port = f":{parsed.port}" if parsed.port else ""
+    database = (parsed.path or "").lstrip("/") or "unknown-db"
+    return f"{host}{port}/{database}"
+
+
+async def ensure_writable_connection(connection, context: str) -> None:
+    """Fail fast when the pipeline is connected to a read-only database session."""
+    from sqlalchemy import text
+
+    # Check transaction_read_only parameter
+    result = await connection.execute(text("SHOW transaction_read_only;"))
+    is_read_only = str(result.scalar() or "").strip().lower() in {"on", "true", "1"}
+
+    # Also check if connected to a read-only replica (hot standby)
+    is_recovery = False
+    try:
+        recovery_result = await connection.execute(text("SELECT pg_is_in_recovery();"))
+        val = recovery_result.scalar()
+        if val is not None:
+            is_recovery = str(val).strip().lower() in {"true", "1", "t", "y", "yes"}
+    except Exception:
+        # Ignore errors if the database doesn't support pg_is_in_recovery() (e.g. non-postgres databases in tests)
+        pass
+
+    if not is_read_only and not is_recovery:
+        return
+
+    from app.config import get_settings
+
+    target = _describe_database_target(get_settings().database_url)
+    raise RuntimeError(
+        f"Database session is read-only during {context}. "
+        "Update the Render DATABASE_URL to a writable Supabase connection "
+        "(for example the direct `db.<project>.supabase.co:5432/postgres` host, "
+        "or another writable pooler endpoint), then rerun the job. "
+        f"Current target: {target}"
+    )
 
 
 async def ensure_daily_recommendations_constraint(db) -> None:
@@ -235,9 +279,11 @@ async def _async_daily_pipeline():
 
     try:
         async with engine.begin() as conn:
+            await ensure_writable_connection(conn, "daily pipeline startup")
             await conn.run_sync(Base.metadata.create_all)
 
         async with async_session_factory() as db:
+            await ensure_writable_connection(db, "daily pipeline")
             await ensure_daily_recommendations_constraint(db)
 
             # 1. Sync F&O universe first
@@ -307,9 +353,11 @@ async def _async_recompute_analytics(trade_date_str: str | None = None):
 
     try:
         async with engine.begin() as conn:
+            await ensure_writable_connection(conn, "analytics recompute startup")
             await conn.run_sync(Base.metadata.create_all)
 
         async with async_session_factory() as db:
+            await ensure_writable_connection(db, "analytics recompute")
             await ensure_daily_recommendations_constraint(db)
             await _run_analytics_pipeline(db, trade_date=trade_date)
 
@@ -338,9 +386,11 @@ async def _async_backfill(start_str: str, end_str: str):
 
     try:
         async with engine.begin() as conn:
+            await ensure_writable_connection(conn, "historical backfill startup")
             await conn.run_sync(Base.metadata.create_all)
 
         async with async_session_factory() as db:
+            await ensure_writable_connection(db, "historical backfill")
             fno_query = select(FnOUniverse).where(FnOUniverse.is_active == True)
             fno_result = await db.execute(fno_query)
             fno_symbols = {r.symbol for r in fno_result.scalars().all()}
