@@ -35,6 +35,22 @@ def run_daily_pipeline():
         raise
 
 
+def recompute_analytics(trade_date_str: str | None = None):
+    """
+    Recompute analytics and recommendations from already loaded database data.
+
+    This skips bhavcopy downloads and is intended to be run after a backfill.
+    """
+    logger.info("Starting analytics-only recompute", trade_date=trade_date_str)
+
+    try:
+        asyncio.run(_async_recompute_analytics(trade_date_str))
+        logger.info("Analytics-only recompute completed successfully")
+    except Exception as e:
+        logger.error(f"Analytics-only recompute failed: {e}")
+        raise
+
+
 async def sync_fno_universe(db):
     """Sync the F&O stock and index universe and lot sizes dynamically from NSE."""
     from app.ingestion.nse_scraper import NSEScraper
@@ -110,6 +126,49 @@ async def sync_fno_universe(db):
         raise
     finally:
         await scraper.close()
+
+
+async def _run_analytics_pipeline(db, trade_date: date) -> None:
+    """Rebuild P&L, optimal bands, and daily recommendations from stored data."""
+    from sqlalchemy import select
+
+    from app.analytics.band_optimizer import BandOptimizer
+    from app.analytics.pnl_calculator import PnLCalculator
+    from app.analytics.recommendation_pipeline import DailyRecommendationPipeline
+    from app.models import FnOUniverse
+
+    fno_query = select(FnOUniverse).where(FnOUniverse.is_active == True)
+    fno_result = await db.execute(fno_query)
+    active_symbols = fno_result.scalars().all()
+
+    pnl_calc = PnLCalculator(db)
+    optimizer = BandOptimizer(db)
+
+    for item in active_symbols:
+        expiry_types = ["monthly"]
+        if item.instrument_type == "index":
+            expiry_types.append("weekly")
+
+        for expiry_type in expiry_types:
+            try:
+                await pnl_calc.compute_for_symbol(item.symbol, expiry_type)
+                await optimizer.optimize_for_symbol(
+                    item.symbol,
+                    item.instrument_type,
+                    expiry_type,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Analytics failed for {item.symbol} ({expiry_type}): {e}"
+                )
+
+    await db.commit()
+    logger.info("Analytics computation complete", symbols=len(active_symbols))
+
+    rec_pipeline = DailyRecommendationPipeline(db)
+    rec_count = await rec_pipeline.run(trade_date=trade_date)
+    logger.info(f"Generated {rec_count} daily recommendations")
+    await db.commit()
 
 
 async def _async_daily_pipeline():
@@ -202,43 +261,8 @@ async def _async_daily_pipeline():
             await db.commit()
             logger.info("Data ingestion phase complete")
 
-            # 5. Compute analytics for recently expired contracts
-            from app.analytics.pnl_calculator import PnLCalculator
-            from app.analytics.band_optimizer import BandOptimizer
-
-            pnl_calc = PnLCalculator(db)
-            optimizer = BandOptimizer(db)
-
-            for symbol in fno_symbols:
-                instrument_type = "index" if symbol in {
-                    "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"
-                } else "stock"
-
-                expiry_types = ["monthly"]
-                if instrument_type == "index":
-                    expiry_types.append("weekly")
-
-                for expiry_type in expiry_types:
-                    try:
-                        await pnl_calc.compute_for_symbol(symbol, expiry_type)
-                        await optimizer.optimize_for_symbol(
-                            symbol, instrument_type, expiry_type
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Analytics failed for {symbol} ({expiry_type}): {e}"
-                        )
-
-            await db.commit()
-            logger.info("Analytics computation complete")
-
-            # 6. Generate daily recommendations
-            from app.analytics.recommendation_pipeline import DailyRecommendationPipeline
-            rec_pipeline = DailyRecommendationPipeline(db)
-            rec_count = await rec_pipeline.run(trade_date=today)
-            logger.info(f"Generated {rec_count} daily recommendations")
-
-            await db.commit()
+            # 5. Compute analytics and regenerate recommendations
+            await _run_analytics_pipeline(db, trade_date=today)
 
     finally:
         await scraper.close()
@@ -250,6 +274,24 @@ def backfill_data(start_date_str: str, end_date_str: str):
     """Backfill historical data for a date range."""
     logger.info(f"Backfilling data from {start_date_str} to {end_date_str}")
     asyncio.run(_async_backfill(start_date_str, end_date_str))
+
+
+async def _async_recompute_analytics(trade_date_str: str | None = None):
+    """Async analytics-only recompute implementation."""
+    from app.core.database import Base, async_session_factory, engine
+
+    trade_date = date.fromisoformat(trade_date_str) if trade_date_str else date.today()
+
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        async with async_session_factory() as db:
+            await _run_analytics_pipeline(db, trade_date=trade_date)
+
+    finally:
+        await engine.dispose()
+        logger.info("Database engine connections disposed")
 
 
 async def _async_backfill(start_str: str, end_str: str):
